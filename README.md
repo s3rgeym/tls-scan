@@ -11,5 +11,9 @@ pip install tls-scan
 Usage:
 
 ```bash
+# show help
 $ tls-scan -h
+
+# scan whole internet
+$ tls-scan -v -a 0.0.0.0/0
 ```
