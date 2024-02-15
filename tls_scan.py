@@ -219,7 +219,7 @@ def parse_args(
         "--address",
         dest="addresses",
         nargs="*",
-        help="IP address or IP range or CIDR to scan",
+        help="IP address, FIRST_IP-LAST-IP or CIDR",
     )
     parser.add_argument(
         "-p",
@@ -228,7 +228,7 @@ def parse_args(
         nargs="*",
         type=port_type,
         default=list(sorted(SERVICE_NAMES)),
-        help="port or port range to scan",
+        help="port or FIRST_PORT-LAST_PORT",
     )
     parser.add_argument(
         "-i",
