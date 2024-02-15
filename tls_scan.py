@@ -12,20 +12,24 @@ import sys
 import tempfile
 import typing
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from ipaddress import IPv4Network, IPv6Network
 from queue import Queue
 from threading import Thread
 
 RESET = "\x1b[m"
+
+BLACK = "\x1b[30m"
 RED = "\x1b[31m"
 GREEN = "\x1b[32m"
 YELLOW = "\x1b[33m"
 BLUE = "\x1b[34m"
 MAGENTA = "\x1b[35m"
 CYAN = "\x1b[36m"
-GREY = "\x1b[37m"
+WHITE = "\x1b[37m"
 
 SERVICE_NAMES = {
+    # Базовые
     465: "smtp",
     587: "smtp",
     993: "imap",
@@ -33,27 +37,30 @@ SERVICE_NAMES = {
     # vmware и многий другой софт висит на 443 и 8443 портах
     443: "https",
     8443: "https",
+    # Далее пошли различные интересные приложения
+    # удаленный доступ к рабочему столу
+    636: "ldap",
+    3389: "rdp",
+    # https://docs.cpanel.net/knowledge-base/general-systems-administration/how-to-configure-your-firewall-for-cpanel-services/
+    2083: "cpanel",
+    2087: "whm",
     6443: "kuber",
     9443: "portainer",
     # https://pve.proxmox.com/wiki/Ports
     8006: "proxmox",
-    # https://docs.cpanel.net/knowledge-base/general-systems-administration/how-to-configure-your-firewall-for-cpanel-services/
-    2083: "cpanel",
-    2087: "whm",
+    # аналог cpanel
     # https://subscription.packtpub.com/book/cloud-and-networking/9781849515849/1/ch01lvl1sec12/connecting-to-webmin#:~:text=Webmin%20uses%20port%2010000%20by,in%20on%20any%20network%20interface.
     10000: "webmin",
 }
 
 
-BANNER = """\
-######## ##        ######           ######   ######     ###    ##    ##
-   ##    ##       ##    ##         ##    ## ##    ##   ## ##   ###   ##
-   ##    ##       ##               ##       ##        ##   ##  ####  ##
-   ##    ##        ######  #######  ######  ##       ##     ## ## ## ##
-   ##    ##             ##               ## ##       ######### ##  ####
-   ##    ##       ##    ##         ##    ## ##    ## ##     ## ##   ###
-   ##    ########  ######           ######   ######  ##     ## ##    ##
-"""
+BANNER = rf"""{GREEN}
+   __  __
+  / /_/ /____      ______________ _____
+ / __/ / ___/_____/ ___/ ___/ __ `/ __ \
+/ /_/ (__  )_____(__  ) /__/ /_/ / / / /
+\__/_/____/     /____/\___/\__,_/_/ /_/
+{RESET}"""
 
 
 def print_banner() -> None:
@@ -112,9 +119,9 @@ def parse_networks(addr: str) -> typing.Iterable[IPv4Network | IPv6Network]:
         yield ipaddress.ip_network(addr)
 
 
-def get_cert_info(ip: str, port: int, timeout: float) -> dict:
+def get_cert_info(ip: str, port: int) -> dict:
     try:
-        cert_data = ssl.get_server_certificate((ip, port), timeout=timeout)
+        cert_data = ssl.get_server_certificate((ip, port))
     except (socket.timeout, socket.error):
         # logging.warning("socket error: %s", ip)
         return {}
@@ -127,32 +134,61 @@ def get_cert_info(ip: str, port: int, timeout: float) -> dict:
         os.unlink(cert_file)
 
 
+def reverse_dns_lookup(
+    addr: str,
+) -> tuple[str, list[str], list[str]] | tuple[None, None, None]:
+    try:
+        return socket.gethostbyaddr(addr)
+    except socket.herror:
+        return None, None, None
+
+
 def check_tls(
     ip: str,
     port: int,
-    timeout: float,
     result_queue: Queue,
 ) -> None:
     logging.debug("check %s:%d", ip, port)
-    if not (cert_dict := get_cert_info(ip, port, timeout)):
+    if not (cert_dict := get_cert_info(ip, port)):
         return
     # logging.info(cert_dict)
     # {'subject': ((('organizationalUnitName', 'PVE Cluster Node'),), (('organizationName', 'Proxmox Virtual Environment'),), (('commonName', 'Pascal'),)), 'issuer': ((('commonName', 'Proxmox Virtual Environment'),), (('organizationalUnitName', '5c02d8c6-7c8d-4b2e-a4b5-8f06c0e380fd'),), (('organizationName', 'PVE Cluster Manager CA'),)), 'version': 3, 'serialNumber': '02', 'notBefore': 'Jan 23 15:26:13 2024 GMT', 'notAfter': 'Jan 22 15:26:13 2026 GMT', 'subjectAltName': (('IP Address', '127.0.0.1'), ('IP Address', '0:0:0:0:0:0:0:1'), ('DNS', 'localhost'), ('IP Address', '31.131.251.85'), ('DNS', 'Pascal'))}
-    logging.info("found tls/ssl cert: %s:%d", ip, port)
-    for key in set(cert_dict) & {"issuer", "subject"}:
-        cert_dict[key] = dict(x[0] for x in cert_dict[key])
-    # TODO:add reverse whois
-    result_queue.put(
-        {
-            "ip": ip,
-            "port": port,
-            "service_name": SERVICE_NAMES.get(port, "unknown"),
-            "cert": cert_dict,
-        }
-    )
+    service_name = SERVICE_NAMES.get(port, "unknown")
+    logging.info("found tls/ssl cert: %s:%d (%s)", ip, port, service_name)
+    # for key in set(cert) & {"issuer", "subject"}:
+    #     cert_dict[key] = dict(x[0] for x in cert_dict[key])
+
+    res = {
+        "ip": ip,
+        "port": port,
+        "service_name": service_name,
+        "cert": {
+            # extensions?
+            k: dict(x[0] for x in v) if k in ["issuer", "subject"] else v
+            for k, v in cert_dict.items()
+        },
+    }
+
+    # Reverse Domain Name Service (RDNS) records are also known as pointer (PTR) records.
+    reverse_name, _, _ = reverse_dns_lookup(ip)
+
+    if reverse_name:
+        # hostname or domain
+        res |= {"hostname": reverse_name}
+
+    result_queue.put(res)
 
 
-def write_results(output: typing.TextIO, result_queue: Queue) -> None:
+@dataclass
+class Counter:
+    val: int = 0
+
+
+def write_results(
+    output: typing.TextIO,
+    result_queue: Queue,
+    count_results: Counter,
+) -> None:
     while True:
         try:
             res = result_queue.get()
@@ -165,6 +201,7 @@ def write_results(output: typing.TextIO, result_queue: Queue) -> None:
             )
             output.write(os.linesep)
             output.flush()
+            count_results.val += 1
         finally:
             result_queue.task_done()
 
@@ -220,7 +257,7 @@ def parse_args(
         "--timeout",
         type=float,
         default=2.0,
-        help="timeout in seconds",
+        help="socket timeout in seconds",
     )
     parser.add_argument(
         "--banner",
@@ -268,32 +305,40 @@ def main(argv: list[str] | None = None) -> None:
         )
     )
 
-    logging.debug("addresses: %d", len(addresses))
-
     result_queue = Queue()
+    # тупо не придумал для него тайпхинт
+    # count_results = type("counter", (), {"val": 0})
+    count_results = Counter()
+    count_results.val
     output_thread = Thread(
-        target=write_results, args=(args.output, result_queue)
+        target=write_results, args=(args.output, result_queue, count_results)
     )
     output_thread.start()
 
+    # по умолчанию ждет 60 секунд соединения!
+    socket.setdefaulttimeout(args.timeout)
     with ThreadPoolExecutor(args.workers_num) as pool:
-        futs = [
-            pool.submit(check_tls, ip, port, args.timeout, result_queue)
+        tasks = [
+            pool.submit(check_tls, ip, port, result_queue)
             for ip, port in itertools.product(addresses, ports)
         ]
 
-    for fut in as_completed(futs):
+    for task in as_completed(tasks):
         try:
-            fut.result()
+            task.result()
         except BaseException as ex:
             logging.warning(ex)
         finally:
-            fut.cancel()
+            task.cancel()
 
     result_queue.put_nowait(None)
     output_thread.join()
 
-    logging.info("Finished!")
+    logging.info(
+        "Finished! Tasks: %d; Results: %d",
+        len(tasks),
+        count_results.val,
+    )
 
 
 if __name__ == "__main__":
