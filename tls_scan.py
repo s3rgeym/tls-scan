@@ -134,19 +134,20 @@ def check_tls(
     result_queue: Queue,
 ) -> None:
     logging.debug("check %s:%d", ip, port)
-    if not (cert_info := get_cert_info(ip, port, timeout)):
+    if not (cert_dict := get_cert_info(ip, port, timeout)):
         return
-    # logging.info(cert_info)
+    # logging.info(cert_dict)
     # {'subject': ((('organizationalUnitName', 'PVE Cluster Node'),), (('organizationName', 'Proxmox Virtual Environment'),), (('commonName', 'Pascal'),)), 'issuer': ((('commonName', 'Proxmox Virtual Environment'),), (('organizationalUnitName', '5c02d8c6-7c8d-4b2e-a4b5-8f06c0e380fd'),), (('organizationName', 'PVE Cluster Manager CA'),)), 'version': 3, 'serialNumber': '02', 'notBefore': 'Jan 23 15:26:13 2024 GMT', 'notAfter': 'Jan 22 15:26:13 2026 GMT', 'subjectAltName': (('IP Address', '127.0.0.1'), ('IP Address', '0:0:0:0:0:0:0:1'), ('DNS', 'localhost'), ('IP Address', '31.131.251.85'), ('DNS', 'Pascal'))}
     logging.info("found tls/ssl cert: %s:%d", ip, port)
-    for key in set(cert_info) & {"issuer", "subject"}:
-        cert_info[key] = dict(x[0] for x in cert_info[key])
+    for key in set(cert_dict) & {"issuer", "subject"}:
+        cert_dict[key] = dict(x[0] for x in cert_dict[key])
+    # TODO:add reverse whois
     result_queue.put(
         {
             "ip": ip,
             "port": port,
             "service_name": SERVICE_NAMES.get(port, "unknown"),
-            "cert_info": cert_info,
+            "cert": cert_dict,
         }
     )
 
