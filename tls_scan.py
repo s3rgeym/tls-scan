@@ -25,7 +25,7 @@ MAGENTA = "\x1b[35m"
 CYAN = "\x1b[36m"
 GREY = "\x1b[37m"
 
-PORT_MAPPING = {
+SERVICE_NAMES = {
     465: "smtp",
     587: "smtp",
     993: "imap",
@@ -37,6 +37,11 @@ PORT_MAPPING = {
     9443: "portainer",
     # https://pve.proxmox.com/wiki/Ports
     8006: "proxmox",
+    # https://docs.cpanel.net/knowledge-base/general-systems-administration/how-to-configure-your-firewall-for-cpanel-services/
+    2083: "cpanel",
+    2087: "whm",
+    # https://subscription.packtpub.com/book/cloud-and-networking/9781849515849/1/ch01lvl1sec12/connecting-to-webmin#:~:text=Webmin%20uses%20port%2010000%20by,in%20on%20any%20network%20interface.
+    10000: "webmin",
 }
 
 
@@ -131,16 +136,16 @@ def check_tls(
     logging.debug("check %s:%d", ip, port)
     if not (cert_info := get_cert_info(ip, port, timeout)):
         return
-    logging.info("found tls/ssl cert: %s:%d", ip, port)
     # logging.info(cert_info)
     # {'subject': ((('organizationalUnitName', 'PVE Cluster Node'),), (('organizationName', 'Proxmox Virtual Environment'),), (('commonName', 'Pascal'),)), 'issuer': ((('commonName', 'Proxmox Virtual Environment'),), (('organizationalUnitName', '5c02d8c6-7c8d-4b2e-a4b5-8f06c0e380fd'),), (('organizationName', 'PVE Cluster Manager CA'),)), 'version': 3, 'serialNumber': '02', 'notBefore': 'Jan 23 15:26:13 2024 GMT', 'notAfter': 'Jan 22 15:26:13 2026 GMT', 'subjectAltName': (('IP Address', '127.0.0.1'), ('IP Address', '0:0:0:0:0:0:0:1'), ('DNS', 'localhost'), ('IP Address', '31.131.251.85'), ('DNS', 'Pascal'))}
+    logging.info("found tls/ssl cert: %s:%d", ip, port)
     for key in set(cert_info) & {"issuer", "subject"}:
         cert_info[key] = dict(x[0] for x in cert_info[key])
     result_queue.put(
         {
             "ip": ip,
             "port": port,
-            "service_name": PORT_MAPPING.get(port, "any"),
+            "service_name": SERVICE_NAMES.get(port, "unknown"),
             "cert_info": cert_info,
         }
     )
@@ -172,20 +177,6 @@ def parse_args(
         add_help=False,
     )
     parser.add_argument(
-        "-i",
-        "--input",
-        type=argparse.FileType(),
-        default="-",
-        help="input file containing list of IP addresses each on a new line",
-    )
-    parser.add_argument(
-        "-o",
-        "--output",
-        type=argparse.FileType("w"),
-        default="-",
-        help="output file with results in JSONL format",
-    )
-    parser.add_argument(
         "-a",
         "--address",
         dest="addresses",
@@ -198,8 +189,22 @@ def parse_args(
         dest="ports",
         nargs="*",
         type=port_type,
-        default=list(sorted(PORT_MAPPING)),
+        default=list(sorted(SERVICE_NAMES)),
         help="port or port range to scan",
+    )
+    parser.add_argument(
+        "-i",
+        "--input",
+        type=argparse.FileType(),
+        default="-",
+        help="input file containing list of IP addresses each on a new line",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=argparse.FileType("w"),
+        default="-",
+        help="output file with results in JSONL format",
     )
     parser.add_argument(
         "-w",
