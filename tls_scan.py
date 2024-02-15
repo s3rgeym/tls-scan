@@ -152,7 +152,7 @@ def check_tls(
     )
 
 
-def write_output(output: typing.TextIO, result_queue: Queue) -> None:
+def write_results(output: typing.TextIO, result_queue: Queue) -> None:
     while True:
         try:
             res = result_queue.get()
@@ -272,7 +272,7 @@ def main(argv: list[str] | None = None) -> None:
 
     result_queue = Queue()
     output_thread = Thread(
-        target=write_output, args=(args.output, result_queue)
+        target=write_results, args=(args.output, result_queue)
     )
     output_thread.start()
 
