@@ -79,7 +79,7 @@ def print_banner() -> None:
 
 
 class ColorHandler(logging.StreamHandler):
-    LOG_COLORS = {
+    _log_colors = {
         logging.DEBUG: CYAN,
         logging.INFO: GREEN,
         logging.WARNING: RED,
@@ -91,7 +91,7 @@ class ColorHandler(logging.StreamHandler):
 
     def format(self, record: logging.LogRecord) -> str:
         message = self._fmt.format(record)
-        return f"{self.LOG_COLORS[record.levelno]}{message}{RESET}"
+        return f"{self._log_colors[record.levelno]}{message}{RESET}"
 
 
 class NameSpace(argparse.Namespace):
