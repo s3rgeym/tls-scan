@@ -11,11 +11,13 @@ import socket
 import ssl
 import sys
 import tempfile
+import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from ipaddress import IPv4Network, IPv6Network
 from threading import Thread
-from typing import Any, AnyStr, Iterable, TextIO
+from typing import Any, Iterable, TextIO
 
 RESET = "\x1b[m"
 
@@ -28,24 +30,28 @@ MAGENTA = "\x1b[35m"
 CYAN = "\x1b[36m"
 WHITE = "\x1b[37m"
 
-PORT_NAMES = {
+PORTS = {
     # Базовые
+    # почта
     465: "smtp",
     587: "smtp",
     993: "imap",
     995: "pop",
     # vmware и многий другой софт висит на 443 и 8443 портах
     # https://kb.vmware.com/s/article/2039095
+    # так же на нем cisco
     443: "https",
     # доп-ый должен идти после основного
     # на этом порту висит админка Plesk
     8443: "https",
-    # Далее пошли различные интересные приложения
     # удаленный доступ к рабочему столу
-    636: "ldap",
+    636: "ldap",  # ldaps
     3389: "rdp",
+    989: "ftp",
+    992: "telnet",
     # в Windows docker висит на порту
-    # 2376: "docker",
+    2376: "docker",
+    # админки
     # https://docs.cpanel.net/knowledge-base/general-systems-administration/how-to-configure-your-firewall-for-cpanel-services/
     2083: "cpanel",
     2087: "whm",
@@ -57,11 +63,16 @@ PORT_NAMES = {
     # аналог cpanel
     # https://subscription.packtpub.com/book/cloud-and-networking/9781849515849/1/ch01lvl1sec12/connecting-to-webmin#:~:text=Webmin%20uses%20port%2010000%20by,in%20on%20any%20network%20interface.
     10000: "webmin",
+    # очереди
+    6379: "redis",
+    # в документации указывают этот порт, значит все ъомячки будут его использовать
+    61616: "activemq",
 }
 
-NAME_PORTS = {v: k for k, v in reversed(PORT_NAMES.items())}
-assert NAME_PORTS["https"] == 443
-
+PORT_NAMES = defaultdict(list)
+for k, v in PORTS.items():
+    PORT_NAMES[v] += [k]
+PORT_NAMES["all"] = list(PORTS)
 
 # Можно выбрать и получше
 # for font in $(ls -1 /usr/share/figlet/ | sed -r '/_/d; s/\..*//'); do echo $font; toilet -f "$font" "tls-scan"; done
@@ -98,7 +109,7 @@ class NameSpace(argparse.Namespace):
     input: TextIO
     output: TextIO
     addresses: list[str]
-    ports: list[int | range]
+    ports: list[int | list[int]]
     workers_num: int
     timeout: float
     verbosity: int
@@ -106,17 +117,19 @@ class NameSpace(argparse.Namespace):
     help: bool
 
 
-def port_type(x: str) -> int | range:
+def port_type(x: str) -> int | list[int]:
     try:
         first, last = map(int, x.split("-"))
-        return range(first, last)
+        return list(range(first, last))
     except ValueError:
-        return int(NAME_PORTS.get(x, x))
+        if rv := PORT_NAMES.get(x):
+            return rv
+        return int(int)
 
 
 def flatten(iterable: Iterable) -> Iterable:
     for x in iterable:
-        if isinstance(x, Iterable) and not isinstance(x, AnyStr):
+        if isinstance(x, Iterable) and not isinstance(x, (str, bytes)):
             yield from flatten(x)
         else:
             yield x
@@ -185,7 +198,7 @@ def check_tls_cert(
     res = {
         "ip": ip,
         "port": port,
-        "port_name": PORT_NAMES.get(port, "unknown"),
+        "port_name": PORTS.get(port, "unknown"),
         "cert": {
             # extensions?
             k: dict(x[0] for x in v) if k in ["issuer", "subject"] else v
@@ -241,8 +254,8 @@ def parse_args(
         dest="ports",
         nargs="*",
         type=port_type,
-        default=list(sorted(PORT_NAMES)),
-        help="port, FIRST_PORT-LAST_PORT or port name (e.g., https, smtp, proxmox)",
+        default=PORT_NAMES["https"],
+        help="port, FIRST_PORT-LAST_PORT or port name (e.g., https, smtp, proxmox or all)",
     )
     parser.add_argument(
         "-i",
@@ -307,7 +320,6 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging_level, handlers=[ColorHandler()])
 
     addresses = list(args.addresses or [])
-    ports = list(flatten(args.ports))
 
     if not args.input.isatty():
         addresses.extend(filter(None, map(str.strip, args.input)))
@@ -316,13 +328,19 @@ def main(argv: list[str] | None = None) -> None:
         map(str, itertools.chain.from_iterable(*map(parse_networks, addresses)))
     )
 
+    logging.debug("number of adresses: %d", len(addresses))
+
+    ports = set(flatten(args.ports))
+
+    logging.debug("number of ports: %d", len(ports))
+
     result_queue = Queue()
     # тупо не придумал для него тайпхинт
     # count_results = type("counter", (), {"val": 0})
-    output_thread = Thread(
+    writer_thread = Thread(
         target=write_results, args=(args.output, result_queue)
     )
-    output_thread.start()
+    writer_thread.start()
 
     # по умолчанию ждет 60 секунд соединения!
     socket.setdefaulttimeout(args.timeout)
@@ -341,10 +359,10 @@ def main(argv: list[str] | None = None) -> None:
             task.cancel()
 
     result_queue.put_nowait(None)
-    output_thread.join()
+    writer_thread.join()
 
     logging.info(
-        "Finished! Tasks: %d; Results: %d",
+        "Finished! Processed: %d; Found: %d",
         len(tasks),
         result_queue.total - 1,  # None
     )
