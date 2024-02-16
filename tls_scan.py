@@ -146,8 +146,7 @@ def get_cert_info(ip: str, port: int) -> dict:
 
 
 # Если на каком-то сервере несколько портов с TLS, то нет смысла выполнять более одного раза запрос к DNS
-# Берем за основу максимальное количество портов
-@lru_cache(maxsize=65536)
+@lru_cache(maxsize=1024)
 def reverse_dns_lookup(
     addr: str,
 ) -> tuple[str, list[str], list[str]] | tuple[None, None, None]:
