@@ -30,7 +30,7 @@ MAGENTA = "\x1b[35m"
 CYAN = "\x1b[36m"
 WHITE = "\x1b[37m"
 
-PORTS = {
+PORT_NAMES = {
     # Базовые
     # почта
     465: "smtp",
@@ -69,10 +69,10 @@ PORTS = {
     61616: "activemq",
 }
 
-PORT_NAMES = defaultdict(list)
-for k, v in PORTS.items():
-    PORT_NAMES[v] += [k]
-PORT_NAMES["all"] = list(PORTS)
+NAME_PORTS = defaultdict(list)
+for k, v in PORT_NAMES.items():
+    NAME_PORTS[v] += [k]
+NAME_PORTS["all"] = list(PORT_NAMES)
 
 # Можно выбрать и получше
 # for font in $(ls -1 /usr/share/figlet/ | sed -r '/_/d; s/\..*//'); do echo $font; toilet -f "$font" "tls-scan"; done
@@ -122,7 +122,7 @@ def port_type(x: str) -> int | list[int]:
         first, last = map(int, x.split("-"))
         return list(range(first, last))
     except ValueError:
-        if rv := PORT_NAMES.get(x):
+        if rv := NAME_PORTS.get(x):
             return rv
         return int(int)
 
@@ -198,7 +198,7 @@ def check_tls_cert(
     res = {
         "ip": ip,
         "port": port,
-        "port_name": PORTS.get(port, "unknown"),
+        "port_name": PORT_NAMES.get(port, "unknown"),
         "cert": {
             # extensions?
             k: dict(x[0] for x in v) if k in ["issuer", "subject"] else v
@@ -254,7 +254,7 @@ def parse_args(
         dest="ports",
         nargs="*",
         type=port_type,
-        default=PORT_NAMES["https"],
+        default=NAME_PORTS["https"],
         help="port, FIRST_PORT-LAST_PORT or port name (e.g., https, smtp, proxmox or all)",
     )
     parser.add_argument(
