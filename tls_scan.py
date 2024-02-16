@@ -11,10 +11,10 @@ import socket
 import ssl
 import sys
 import tempfile
-import time
+import textwrap
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
+from functools import lru_cache, partial
 from ipaddress import IPv4Network, IPv6Network
 from threading import Thread
 from typing import Any, Iterable, TextIO
@@ -76,17 +76,19 @@ NAME_PORTS["all"] = list(PORT_NAMES)
 
 # Можно выбрать и получше
 # for font in $(ls -1 /usr/share/figlet/ | sed -r '/_/d; s/\..*//'); do echo $font; toilet -f "$font" "tls-scan"; done
-BANNER = rf"""{GREEN}
+BANNER = r"""
    __  __
   / /_/ /____      ______________ _____
  / __/ / ___/_____/ ___/ ___/ __ `/ __ \
 / /_/ (__  )_____(__  ) /__/ /_/ / / / /
 \__/_/____/     /____/\___/\__,_/_/ /_/
-{RESET}"""
+"""
+
+print_err = partial(print, file=sys.stderr)
 
 
 def print_banner() -> None:
-    print(BANNER, file=sys.stderr)
+    print_err(BANNER)
 
 
 class ColorHandler(logging.StreamHandler):
@@ -313,24 +315,28 @@ def main(argv: list[str] | None = None) -> None:
     if args.banner:
         print_banner()
 
+    addresses = list(args.addresses or [])
+
+    if not args.input.isatty():
+        addresses.extend(filter(None, map(str.strip, args.input)))
+
+    ports = set(flatten(args.ports))
+
+    if not addresses or not ports:
+        parser.error("nothing to scan")
+
+    # Разбиваем подсети на список ip
+    addresses = list(
+        map(str, itertools.chain.from_iterable(*map(parse_networks, addresses)))
+    )
+
     logging_level = max(
         logging.DEBUG, logging.WARNING - args.verbosity * logging.DEBUG
     )
 
     logging.basicConfig(level=logging_level, handlers=[ColorHandler()])
 
-    addresses = list(args.addresses or [])
-
-    if not args.input.isatty():
-        addresses.extend(filter(None, map(str.strip, args.input)))
-
-    addresses = list(
-        map(str, itertools.chain.from_iterable(*map(parse_networks, addresses)))
-    )
-
     logging.debug("number of adresses: %d", len(addresses))
-
-    ports = set(flatten(args.ports))
 
     logging.debug("number of ports: %d", len(ports))
 

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "tls-scan"
-version = "0.1.1"
+version = "0.1.2"
 description = "Scan IP addresses for TLS/SSL certificates"
 authors = ["Sergey M"]
 readme = "README.md"
