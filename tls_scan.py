@@ -6,16 +6,16 @@ import itertools
 import json
 import logging
 import os
+import queue
 import socket
 import ssl
 import sys
 import tempfile
-import typing
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from functools import lru_cache
 from ipaddress import IPv4Network, IPv6Network
-from queue import Queue
 from threading import Thread
+from typing import Any, AnyStr, Iterable, TextIO
 
 RESET = "\x1b[m"
 
@@ -35,16 +35,21 @@ PORT_NAMES = {
     993: "imap",
     995: "pop",
     # vmware и многий другой софт висит на 443 и 8443 портах
+    # https://kb.vmware.com/s/article/2039095
     443: "https",
     # доп-ый должен идти после основного
+    # на этом порту висит админка Plesk
     8443: "https",
     # Далее пошли различные интересные приложения
     # удаленный доступ к рабочему столу
     636: "ldap",
     3389: "rdp",
+    # в Windows docker висит на порту
+    # 2376: "docker",
     # https://docs.cpanel.net/knowledge-base/general-systems-administration/how-to-configure-your-firewall-for-cpanel-services/
     2083: "cpanel",
     2087: "whm",
+    # https://kubernetes.io/docs/concepts/security/controlling-access/
     6443: "kuber",
     9443: "portainer",
     # https://pve.proxmox.com/wiki/Ports
@@ -58,6 +63,8 @@ NAME_PORTS = {v: k for k, v in reversed(PORT_NAMES.items())}
 assert NAME_PORTS["https"] == 443
 
 
+# Можно выбрать и получше
+# for font in $(ls /usr/share/figlet/ | sed -r '/_/d; s/\..*//'); do echo $font; toilet -f "$font" "tls-scan"; done
 BANNER = rf"""{GREEN}
    __  __
   / /_/ /____      ______________ _____
@@ -88,8 +95,8 @@ class ColorHandler(logging.StreamHandler):
 
 
 class NameSpace(argparse.Namespace):
-    input: typing.TextIO
-    output: typing.TextIO
+    input: TextIO
+    output: TextIO
     addresses: list[str]
     ports: list[int | range]
     workers_num: int
@@ -107,15 +114,15 @@ def port_type(x: str) -> int | range:
         return int(NAME_PORTS.get(x, x))
 
 
-def flatten(iterable: typing.Iterable) -> typing.Iterable:
+def flatten(iterable: Iterable) -> Iterable:
     for x in iterable:
-        if isinstance(x, typing.Iterable) and not isinstance(x, typing.AnyStr):
+        if isinstance(x, Iterable) and not isinstance(x, AnyStr):
             yield from flatten(x)
         else:
             yield x
 
 
-def parse_networks(addr: str) -> typing.Iterable[IPv4Network | IPv6Network]:
+def parse_networks(addr: str) -> Iterable[IPv4Network | IPv6Network]:
     try:
         first, last = map(ipaddress.ip_address, addr.split("-"))
         yield from ipaddress.summarize_address_range(first, last)
@@ -138,6 +145,9 @@ def get_cert_info(ip: str, port: int) -> dict:
         os.unlink(cert_file)
 
 
+# Если на каком-то сервере несколько портов с TLS, то нет смысла выполнять более одного раза запрос к DNS
+# Берем за основу максимальное количество портов
+@lru_cache(maxsize=65536)
 def reverse_dns_lookup(
     addr: str,
 ) -> tuple[str, list[str], list[str]] | tuple[None, None, None]:
@@ -147,7 +157,19 @@ def reverse_dns_lookup(
         return None, None, None
 
 
-def check_tls(
+class Queue(queue.Queue):
+    def __init__(self, maxsize: int = 0) -> None:
+        super().__init__(maxsize)
+        self.total = 0
+
+    def put(
+        self, item: Any, block: bool = True, timeout: float | None = None
+    ) -> None:
+        super().put(item, block, timeout)
+        self.total += 1
+
+
+def check_tls_cert(
     ip: str,
     port: int,
     result_queue: Queue,
@@ -157,15 +179,14 @@ def check_tls(
         return
     # logging.info(cert_dict)
     # {'subject': ((('organizationalUnitName', 'PVE Cluster Node'),), (('organizationName', 'Proxmox Virtual Environment'),), (('commonName', 'Pascal'),)), 'issuer': ((('commonName', 'Proxmox Virtual Environment'),), (('organizationalUnitName', '5c02d8c6-7c8d-4b2e-a4b5-8f06c0e380fd'),), (('organizationName', 'PVE Cluster Manager CA'),)), 'version': 3, 'serialNumber': '02', 'notBefore': 'Jan 23 15:26:13 2024 GMT', 'notAfter': 'Jan 22 15:26:13 2026 GMT', 'subjectAltName': (('IP Address', '127.0.0.1'), ('IP Address', '0:0:0:0:0:0:0:1'), ('DNS', 'localhost'), ('IP Address', '31.131.251.85'), ('DNS', 'Pascal'))}
-    port_name = PORT_NAMES.get(port, "unknown")
-    logging.info("found tls/ssl cert: %s:%d (%s)", ip, port, port_name)
+    logging.info("found tls/ssl cert: %s:%d", ip, port)
     # for key in set(cert) & {"issuer", "subject"}:
     #     cert_dict[key] = dict(x[0] for x in cert_dict[key])
 
     res = {
         "ip": ip,
         "port": port,
-        "port_name": port_name,
+        "port_name": PORT_NAMES.get(port, "unknown"),
         "cert": {
             # extensions?
             k: dict(x[0] for x in v) if k in ["issuer", "subject"] else v
@@ -174,6 +195,7 @@ def check_tls(
     }
 
     # Reverse Domain Name Service (RDNS) records are also known as pointer (PTR) records.
+    # Для почты PTR обязателен. Это один из способов узнать домен по айпи по-мимо имен в сертификате на 443 порту
     reverse_name, _, _ = reverse_dns_lookup(ip)
 
     if reverse_name:
@@ -183,15 +205,9 @@ def check_tls(
     result_queue.put(res)
 
 
-@dataclass
-class Counter:
-    val: int = 0
-
-
 def write_results(
-    output: typing.TextIO,
+    output: TextIO,
     result_queue: Queue,
-    count_results: Counter,
 ) -> None:
     while True:
         try:
@@ -205,7 +221,6 @@ def write_results(
             )
             output.write(os.linesep)
             output.flush()
-            count_results.val += 1
         finally:
             result_queue.task_done()
 
@@ -312,10 +327,8 @@ def main(argv: list[str] | None = None) -> None:
     result_queue = Queue()
     # тупо не придумал для него тайпхинт
     # count_results = type("counter", (), {"val": 0})
-    count_results = Counter()
-    count_results.val
     output_thread = Thread(
-        target=write_results, args=(args.output, result_queue, count_results)
+        target=write_results, args=(args.output, result_queue)
     )
     output_thread.start()
 
@@ -323,7 +336,7 @@ def main(argv: list[str] | None = None) -> None:
     socket.setdefaulttimeout(args.timeout)
     with ThreadPoolExecutor(args.workers_num) as pool:
         tasks = [
-            pool.submit(check_tls, ip, port, result_queue)
+            pool.submit(check_tls_cert, ip, port, result_queue)
             for ip, port in itertools.product(addresses, ports)
         ]
 
@@ -341,7 +354,7 @@ def main(argv: list[str] | None = None) -> None:
     logging.info(
         "Finished! Tasks: %d; Results: %d",
         len(tasks),
-        count_results.val,
+        result_queue.total - 1,  # None
     )
 
 
