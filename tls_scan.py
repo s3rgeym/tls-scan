@@ -213,11 +213,7 @@ def write_results(
             res = result_queue.get()
             if res is None:
                 break
-            json.dump(
-                res,
-                output,
-                ensure_ascii=False,
-            )
+            json.dump(res, output, ensure_ascii=False)
             output.write(os.linesep)
             output.flush()
         finally:
@@ -317,10 +313,7 @@ def main(argv: list[str] | None = None) -> None:
         addresses.extend(filter(None, map(str.strip, args.input)))
 
     addresses = list(
-        map(
-            str,
-            itertools.chain.from_iterable(*map(parse_networks, addresses)),
-        )
+        map(str, itertools.chain.from_iterable(*map(parse_networks, addresses)))
     )
 
     result_queue = Queue()
