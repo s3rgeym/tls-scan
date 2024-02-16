@@ -64,7 +64,7 @@ assert NAME_PORTS["https"] == 443
 
 
 # Можно выбрать и получше
-# for font in $(ls /usr/share/figlet/ | sed -r '/_/d; s/\..*//'); do echo $font; toilet -f "$font" "tls-scan"; done
+# for font in $(ls -1 /usr/share/figlet/ | sed -r '/_/d; s/\..*//'); do echo $font; toilet -f "$font" "tls-scan"; done
 BANNER = rf"""{GREEN}
    __  __
   / /_/ /____      ______________ _____
