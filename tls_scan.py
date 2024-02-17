@@ -34,7 +34,7 @@ except ImportError:
             yield batch
 
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 __maintainer__ = "Sergey M"
 
 RESET = "\x1b[m"
@@ -330,7 +330,7 @@ def parse_args(
         "--workers",
         dest="workers_num",
         type=int,
-        default=50,
+        default=150,
         help="maximum number of worker threads",
     )
     parser.add_argument(
@@ -428,7 +428,7 @@ def main(argv: list[str] | None = None) -> None:
             itertools.product(ips, ports),
             batch_size,
         ):
-            logging.info("process batch")
+            logging.info("process batch with size: %d", len(batch))
             tasks = [
                 pool.submit(check_tls_cert, ip, port, result_queue)
                 for ip, port in batch
@@ -447,7 +447,7 @@ def main(argv: list[str] | None = None) -> None:
 
     tm += time.monotonic()
     logging.info(
-        "finished at %.3fs; processed: %d; total results: %d.",
+        "finished at %.3fs; processed: %d; total results: %d",
         tm,
         processed_tasks,
         result_queue.total - 1,  # None
