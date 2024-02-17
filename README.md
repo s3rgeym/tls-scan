@@ -33,5 +33,5 @@ You can specify the port using `-p`. Instead of a port number or port range, you
 Example #2: extract domains from certificate using [jq](https://jqlang.github.io/jq/):
 
 ```bash
-$ tls-scan -a X.X.X.1-X.X.X.255 -p https smtp | jq -r '.cert.commonName, .cert.subjectAltName[]?[1], .hostname | select(.)'
+$ tls-scan -a X.X.X.1-X.X.X.255 -p https smtp | jq -r '.cert.commonName, ( .cert.subjectAltName?[] | select(.[0]=="DNS")[1] ), .hostname | select(.)'
 ```
