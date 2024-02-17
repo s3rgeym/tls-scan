@@ -35,7 +35,7 @@ except ImportError:
             yield batch
 
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 __maintainer__ = "Sergey M"
 
 if "nt" == os.name:
