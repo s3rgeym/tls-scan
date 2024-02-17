@@ -18,7 +18,7 @@ $ tls-scan -h
 $ tls-scan -v -a 0.0.0.0/0
 ```
 
-You can specify the port using `-p`. Instead of a port number or port range, you can use an alias: smtp, imap, pop, https, ldap, rdp, ftp, telnet, cpanel, whm, kuber, portainer, proxmox, webmin, redis, activemq or all.
+You can specify the port using `-p`. Instead of a port number or port range, you can use an alias: `smtp`, `imap`, `pop`, `https`, `ldap`, `rdp`, `ftp`, `telnet`, `cpanel`, `whm`, `kuber`, `portainer`, `proxmox`, `webmin`, `redis`, `activemq`. Specify `all` to scan all listed ports and `common` for the most common ones.
 
 Output example:
 

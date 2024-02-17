@@ -11,7 +11,7 @@ import socket
 import ssl
 import sys
 import tempfile
-import textwrap
+import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache, partial
@@ -30,24 +30,25 @@ MAGENTA = "\x1b[35m"
 CYAN = "\x1b[36m"
 WHITE = "\x1b[37m"
 
+# https://www.globalsign.com/en-sg/blog/securing-internet-connection-all-about-ssl-port-or-secured-ports
 PORT_NAMES = {
     # Базовые
-    # почта
     465: "smtp",
     587: "smtp",
     993: "imap",
     995: "pop",
     # vmware и многий другой софт висит на 443 и 8443 портах
     # https://kb.vmware.com/s/article/2039095
-    # так же на нем cisco
+    # так же на нем cisco, zabbix
     443: "https",
-    # доп-ый должен идти после основного
     # на этом порту висит админка Plesk
     8443: "https",
     # удаленный доступ к рабочему столу
+    # виртуалки и/или samba
     636: "ldap",  # ldaps
     3389: "rdp",
-    989: "ftp",
+    # 989: "ftp",
+    990: "ftp",
     992: "telnet",
     # в Windows docker висит на порту
     2376: "docker",
@@ -55,14 +56,20 @@ PORT_NAMES = {
     # https://docs.cpanel.net/knowledge-base/general-systems-administration/how-to-configure-your-firewall-for-cpanel-services/
     2083: "cpanel",
     2087: "whm",
+    2222: "direct-admin",
     # https://kubernetes.io/docs/concepts/security/controlling-access/
     6443: "kuber",
     9443: "portainer",
     # https://pve.proxmox.com/wiki/Ports
     8006: "proxmox",
+    # https://www.howtoforge.com/tutorial/securing-ispconfig-3-with-a-free-lets-encrypt-ssl-certificate/
+    8080: "ispconfig",
+    8083: "vesta",
     # аналог cpanel
     # https://subscription.packtpub.com/book/cloud-and-networking/9781849515849/1/ch01lvl1sec12/connecting-to-webmin#:~:text=Webmin%20uses%20port%2010000%20by,in%20on%20any%20network%20interface.
     10000: "webmin",
+    5000: "docker-registry",
+    9000: "any",
     # очереди
     6379: "redis",
     # в документации указывают этот порт, значит все хомячки будут его использовать
@@ -72,7 +79,16 @@ PORT_NAMES = {
 NAME_PORTS = defaultdict(list)
 for k, v in PORT_NAMES.items():
     NAME_PORTS[v] += [k]
-NAME_PORTS["all"] = list(PORT_NAMES)
+NAME_PORTS["all"] = sorted(PORT_NAMES)
+# https://docs.digicert.com/en/certcentral/certificate-tools/discovery-user-guide/set-up-and-run-a-scan.html#:~:text=Use%20Default%20to%20include%20ports,%2C%20465%2C%208443%2C%203389.&text=If%20you%20are%20using%20Server,max%2010%20ports%20per%20server
+NAME_PORTS["common"] = sorted(
+    NAME_PORTS["smtp"]
+    + NAME_PORTS["imap"]
+    + NAME_PORTS["pop"]
+    + NAME_PORTS["https"]
+    + NAME_PORTS["ldap"]
+    + NAME_PORTS["rdp"]
+)
 
 # Можно выбрать и получше
 # for font in $(ls -1 /usr/share/figlet/ | sed -r '/_/d; s/\..*//'); do echo $font; toilet -f "$font" "tls-scan"; done
@@ -126,7 +142,7 @@ def port_type(x: str) -> int | list[int]:
     except ValueError:
         if rv := NAME_PORTS.get(x):
             return rv
-        return int(int)
+        return int(x)
 
 
 def flatten(iterable: Iterable) -> Iterable:
@@ -143,6 +159,17 @@ def parse_networks(addr: str) -> Iterable[IPv4Network | IPv6Network]:
         yield from ipaddress.summarize_address_range(first, last)
     except ValueError:
         yield ipaddress.ip_network(addr)
+
+
+def expand_ips(addresses: list[str]) -> Iterable[str]:
+    if not addresses:
+        return
+    yield from map(
+        str,
+        itertools.chain.from_iterable(
+            *map(parse_networks, addresses),
+        ),
+    )
 
 
 def get_cert_info(ip: str, port: int) -> dict:
@@ -256,8 +283,8 @@ def parse_args(
         dest="ports",
         nargs="*",
         type=port_type,
-        default=NAME_PORTS["https"],
-        help="port, FIRST_PORT-LAST_PORT or port name (e.g., https, smtp, proxmox or all)",
+        default=NAME_PORTS["common"],
+        help="port, FIRST_PORT-LAST_PORT or port name (e.g., https, smtp, common or all for all known)",
     )
     parser.add_argument(
         "-i",
@@ -306,29 +333,25 @@ def parse_args(
 
 
 def main(argv: list[str] | None = None) -> None:
+    tm = -time.monotonic()
     parser, args = parse_args(argv)
 
     if args.help:
         parser.print_help(sys.stderr)
         return 1
 
-    if args.banner:
-        print_banner()
-
     addresses = list(args.addresses or [])
 
     if not args.input.isatty():
         addresses.extend(filter(None, map(str.strip, args.input)))
 
-    ports = set(flatten(args.ports))
-
-    if not addresses or not ports:
+    if not addresses:
         parser.error("nothing to scan")
 
-    # Разбиваем подсети на список ip
-    addresses = list(
-        map(str, itertools.chain.from_iterable(*map(parse_networks, addresses)))
-    )
+    addresses = expand_ips(addresses)
+
+    # порты не могут быть пустыми
+    ports = flatten(args.ports)
 
     logging_level = max(
         logging.DEBUG, logging.WARNING - args.verbosity * logging.DEBUG
@@ -336,17 +359,10 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=logging_level, handlers=[ColorHandler()])
 
-    logging.debug("number of adresses: %d", len(addresses))
-
-    logging.debug("number of ports: %d", len(ports))
+    if args.banner:
+        print_banner()
 
     result_queue = Queue()
-    # тупо не придумал для него тайпхинт
-    # count_results = type("counter", (), {"val": 0})
-    writer_thread = Thread(
-        target=write_results, args=(args.output, result_queue)
-    )
-    writer_thread.start()
 
     # по умолчанию ждет 60 секунд соединения!
     socket.setdefaulttimeout(args.timeout)
@@ -355,6 +371,14 @@ def main(argv: list[str] | None = None) -> None:
             pool.submit(check_tls_cert, ip, port, result_queue)
             for ip, port in itertools.product(addresses, ports)
         ]
+
+    # если запустить раньше, то приведет к зависанию
+    # тупо не придумал для него тайпхинт
+    # count_results = type("counter", (), {"val": 0})
+    writer_thread = Thread(
+        target=write_results, args=(args.output, result_queue)
+    )
+    writer_thread.start()
 
     for task in as_completed(tasks):
         try:
@@ -367,8 +391,10 @@ def main(argv: list[str] | None = None) -> None:
     result_queue.put_nowait(None)
     writer_thread.join()
 
+    tm += time.monotonic()
     logging.info(
-        "Finished! Processed: %d; Found: %d",
+        "Finished at %.3fs; Processed: %d; Results: %d.",
+        tm,
         len(tasks),
         result_queue.total - 1,  # None
     )
