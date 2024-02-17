@@ -8,6 +8,8 @@ Installation:
 pip install tls-scan
 ```
 
+> This tool does not use third-party dependencies and can be run as a script.
+
 Usage:
 
 ```bash

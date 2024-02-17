@@ -19,6 +19,24 @@ from ipaddress import IPv4Network, IPv6Network
 from threading import Thread
 from typing import Any, Iterable, TextIO
 
+try:
+    from collections import Sequence
+except ImportError:
+    from typing import Sequence
+
+try:
+    from itertools import batched
+except ImportError:
+
+    def batched(iterable: Iterable, n: int) -> Iterable[tuple]:
+        it = iter(iterable)
+        while batch := tuple(itertools.islice(it, n)):
+            yield batch
+
+
+__version__ = "0.1.4"
+__maintainer__ = "Sergey M"
+
 RESET = "\x1b[m"
 
 BLACK = "\x1b[30m"
@@ -30,7 +48,9 @@ MAGENTA = "\x1b[35m"
 CYAN = "\x1b[36m"
 WHITE = "\x1b[37m"
 
+# Основные я бпвл отсюда:
 # https://www.globalsign.com/en-sg/blog/securing-internet-connection-all-about-ssl-port-or-secured-ports
+# Но SSH не имеет никакого отношения к SSL/TSL
 PORT_NAMES = {
     # Базовые
     465: "smtp",
@@ -63,12 +83,13 @@ PORT_NAMES = {
     # https://pve.proxmox.com/wiki/Ports
     8006: "proxmox",
     # https://www.howtoforge.com/tutorial/securing-ispconfig-3-with-a-free-lets-encrypt-ssl-certificate/
-    8080: "ispconfig",
+    8080: "ispconfig",  # + всякие vpn/прокси
     8083: "vesta",
     # аналог cpanel
     # https://subscription.packtpub.com/book/cloud-and-networking/9781849515849/1/ch01lvl1sec12/connecting-to-webmin#:~:text=Webmin%20uses%20port%2010000%20by,in%20on%20any%20network%20interface.
     10000: "webmin",
     5000: "docker-registry",
+    # много разных приожений висит на этом порту
     9000: "any",
     # очереди
     6379: "redis",
@@ -76,18 +97,18 @@ PORT_NAMES = {
     61616: "activemq",
 }
 
-NAME_PORTS = defaultdict(list)
+PORTS_BY_NAME = defaultdict(list)
 for k, v in PORT_NAMES.items():
-    NAME_PORTS[v] += [k]
-NAME_PORTS["all"] = sorted(PORT_NAMES)
+    PORTS_BY_NAME[v] += [k]
+PORTS_BY_NAME["all"] = sorted(PORT_NAMES)
 # https://docs.digicert.com/en/certcentral/certificate-tools/discovery-user-guide/set-up-and-run-a-scan.html#:~:text=Use%20Default%20to%20include%20ports,%2C%20465%2C%208443%2C%203389.&text=If%20you%20are%20using%20Server,max%2010%20ports%20per%20server
-NAME_PORTS["common"] = sorted(
-    NAME_PORTS["smtp"]
-    + NAME_PORTS["imap"]
-    + NAME_PORTS["pop"]
-    + NAME_PORTS["https"]
-    + NAME_PORTS["ldap"]
-    + NAME_PORTS["rdp"]
+PORTS_BY_NAME["common"] = sorted(
+    PORTS_BY_NAME["smtp"]
+    + PORTS_BY_NAME["imap"]
+    + PORTS_BY_NAME["pop"]
+    + PORTS_BY_NAME["https"]
+    + PORTS_BY_NAME["ldap"]
+    + PORTS_BY_NAME["rdp"]
 )
 
 # Можно выбрать и получше
@@ -130,19 +151,26 @@ class NameSpace(argparse.Namespace):
     ports: list[int | list[int]]
     workers_num: int
     timeout: float
+    batch_size: int
     verbosity: int
     banner: bool
     help: bool
 
 
-def port_type(x: str) -> int | list[int]:
+def parse_port(x: str) -> int | list[int]:
+    if x.isdigit():
+        return int(x)
     try:
         first, last = map(int, x.split("-"))
         return list(range(first, last))
     except ValueError:
-        if rv := NAME_PORTS.get(x):
-            return rv
-        return int(x)
+        pass
+    try:
+        return PORTS_BY_NAME[x]
+    except IndexError:
+        raise ValueError(
+            f"invalid port number, port range, or port name: {x!r}"
+        )
 
 
 def flatten(iterable: Iterable) -> Iterable:
@@ -153,22 +181,19 @@ def flatten(iterable: Iterable) -> Iterable:
             yield x
 
 
-def parse_networks(addr: str) -> Iterable[IPv4Network | IPv6Network]:
-    try:
-        first, last = map(ipaddress.ip_address, addr.split("-"))
-        yield from ipaddress.summarize_address_range(first, last)
-    except ValueError:
-        yield ipaddress.ip_network(addr)
+def parse_networks(addresses: list[str]) -> Iterable[IPv4Network | IPv6Network]:
+    for addr in addresses:
+        try:
+            first, last = map(ipaddress.ip_address, addr.split("-"))
+            yield from ipaddress.summarize_address_range(first, last)
+        except ValueError:
+            yield ipaddress.ip_network(addr)
 
 
-def expand_ips(addresses: list[str]) -> Iterable[str]:
-    if not addresses:
-        return
+def expand_ips(networks: Sequence[IPv4Network | IPv6Network]) -> Iterable[str]:
     yield from map(
         str,
-        itertools.chain.from_iterable(
-            *map(parse_networks, addresses),
-        ),
+        itertools.chain.from_iterable(networks),
     )
 
 
@@ -282,8 +307,8 @@ def parse_args(
         "--port",
         dest="ports",
         nargs="*",
-        type=port_type,
-        default=NAME_PORTS["common"],
+        type=parse_port,
+        default=PORTS_BY_NAME["common"],
         help="port, FIRST_PORT-LAST_PORT or port name (e.g., https, smtp, common or all for all known)",
     )
     parser.add_argument(
@@ -316,6 +341,13 @@ def parse_args(
         help="socket timeout in seconds",
     )
     parser.add_argument(
+        "-b",
+        "--batch-size",
+        default=1024,
+        type=int,
+        help="batch size",
+    )
+    parser.add_argument(
         "--banner",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -327,6 +359,9 @@ def parse_args(
         action="count",
         default=0,
         help="increase verbosity level",
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
     )
     parser.add_argument("-h", "--help", action="store_true", help="show help")
     return parser, parser.parse_args(argv, NameSpace())
@@ -345,19 +380,27 @@ def main(argv: list[str] | None = None) -> None:
     if not args.input.isatty():
         addresses.extend(filter(None, map(str.strip, args.input)))
 
-    if not addresses:
+    try:
+        networks = set(parse_networks(addresses))
+    except ValueError as ex:
+        parser.error(ex)
+
+    ports = set(flatten(args.ports))
+
+    if not networks or not ports:
         parser.error("nothing to scan")
 
-    addresses = expand_ips(addresses)
-
-    # порты не могут быть пустыми
-    ports = flatten(args.ports)
+    # if 1 > args.batch_size:
+    #     parser.error("invalid batch size")
 
     logging_level = max(
         logging.DEBUG, logging.WARNING - args.verbosity * logging.DEBUG
     )
 
     logging.basicConfig(level=logging_level, handlers=[ColorHandler()])
+
+    # адресов может быть миллиард, если их всех в массив загнать, то не хватит памяти
+    ips = expand_ips(networks)
 
     if args.banner:
         print_banner()
@@ -373,28 +416,40 @@ def main(argv: list[str] | None = None) -> None:
 
     # по умолчанию ждет 60 секунд соединения!
     socket.setdefaulttimeout(args.timeout)
-    with ThreadPoolExecutor(args.workers_num) as pool:
-        tasks = [
-            pool.submit(check_tls_cert, ip, port, result_queue)
-            for ip, port in itertools.product(addresses, ports)
-        ]
-
-    for task in as_completed(tasks):
-        try:
-            task.result()
-        except BaseException as ex:
-            logging.warning(ex)
-        finally:
-            task.cancel()
+    workers_num = min(max(args.workers_num, 1), 1024)
+    batch_size = min(max(args.batch_size, workers_num), 1024 * 1024)
+    ips_num = sum(net.num_addresses for net in networks)
+    ports_num = len(ports)
+    logging.info(f"{workers_num=}, {batch_size=}, {ips_num=}, {ports_num=}")
+    processed_tasks = 0
+    with ThreadPoolExecutor(workers_num) as pool:
+        # количество заданий тоже ограничено
+        for batch in batched(
+            itertools.product(ips, ports),
+            batch_size,
+        ):
+            logging.info("process batch")
+            tasks = [
+                pool.submit(check_tls_cert, ip, port, result_queue)
+                for ip, port in batch
+            ]
+            for task in as_completed(tasks):
+                try:
+                    task.result()
+                except BaseException as ex:
+                    logging.exception(ex)
+                finally:
+                    task.cancel()
+            processed_tasks += len(tasks)
 
     result_queue.put_nowait(None)
     writer_thread.join()
 
     tm += time.monotonic()
     logging.info(
-        "Finished at %.3fs; Processed: %d; Results: %d.",
+        "finished at %.3fs; processed: %d; total results: %d.",
         tm,
-        len(tasks),
+        processed_tasks,
         result_queue.total - 1,  # None
     )
 
