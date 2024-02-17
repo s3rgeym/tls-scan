@@ -364,6 +364,13 @@ def main(argv: list[str] | None = None) -> None:
 
     result_queue = Queue()
 
+    # тупо не придумал для него тайпхинт
+    # count_results = type("counter", (), {"val": 0})
+    writer_thread = Thread(
+        target=write_results, args=(args.output, result_queue)
+    )
+    writer_thread.start()
+
     # по умолчанию ждет 60 секунд соединения!
     socket.setdefaulttimeout(args.timeout)
     with ThreadPoolExecutor(args.workers_num) as pool:
@@ -371,14 +378,6 @@ def main(argv: list[str] | None = None) -> None:
             pool.submit(check_tls_cert, ip, port, result_queue)
             for ip, port in itertools.product(addresses, ports)
         ]
-
-    # если запустить раньше, то приведет к зависанию
-    # тупо не придумал для него тайпхинт
-    # count_results = type("counter", (), {"val": 0})
-    writer_thread = Thread(
-        target=write_results, args=(args.output, result_queue)
-    )
-    writer_thread.start()
 
     for task in as_completed(tasks):
         try:
