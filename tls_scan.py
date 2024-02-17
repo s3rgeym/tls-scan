@@ -12,6 +12,7 @@ import ssl
 import sys
 import tempfile
 import time
+import warnings
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache, partial
@@ -36,6 +37,14 @@ except ImportError:
 
 __version__ = "0.1.5"
 __maintainer__ = "Sergey M"
+
+if "nt" == os.name:
+    warnings.warn("Windows govno use linux instead", RuntimeWarning)
+
+try:
+    MAXIMUM_THREADS_MUM = int(open("/proc/sys/kernel/threads-max").read())
+except OSError:
+    MAXIMUM_THREADS_MUM = 1024
 
 RESET = "\x1b[m"
 
@@ -330,7 +339,7 @@ def parse_args(
         "--workers",
         dest="workers_num",
         type=int,
-        default=150,
+        default=128,
         help="maximum number of worker threads",
     )
     parser.add_argument(
@@ -343,7 +352,7 @@ def parse_args(
     parser.add_argument(
         "-b",
         "--batch-size",
-        default=1024,
+        default=8192,
         type=int,
         help="batch size",
     )
@@ -416,7 +425,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # по умолчанию ждет 60 секунд соединения!
     socket.setdefaulttimeout(args.timeout)
-    workers_num = min(max(args.workers_num, 1), 1024)
+    workers_num = min(max(args.workers_num, 1), MAXIMUM_THREADS_MUM)
     batch_size = min(max(args.batch_size, workers_num), 1024 * 1024)
     ips_num = sum(net.num_addresses for net in networks)
     ports_num = len(ports)
