@@ -40,7 +40,7 @@ __version__ = "0.1.7"
 __maintainer__ = "Sergey M"
 
 if "nt" == os.name:
-    warnings.warn("Windows govno use linux instead", RuntimeWarning)
+    warnings.warn("Windows is govno 💩 use linux instead", RuntimeWarning)
 
 try:
     MAXIMUM_THREADS_MUM = int(open("/proc/sys/kernel/threads-max").read())
