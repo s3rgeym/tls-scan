@@ -35,7 +35,7 @@ except ImportError:
             yield batch
 
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 __maintainer__ = "Sergey M"
 
 if "nt" == os.name:
@@ -169,17 +169,14 @@ class NameSpace(argparse.Namespace):
 def parse_port(x: str) -> int | list[int]:
     if x.isdigit():
         return int(x)
+    if rv := PORTS_BY_NAME[x]:
+        return rv
     try:
         first, last = map(int, x.split("-"))
         return list(range(first, last))
     except ValueError:
         pass
-    try:
-        return PORTS_BY_NAME[x]
-    except IndexError:
-        raise ValueError(
-            f"invalid port number, port range, or port name: {x!r}"
-        )
+    raise ValueError(f"invalid port number, port range, or port name: {x!r}")
 
 
 def flatten(iterable: Iterable) -> Iterable:
