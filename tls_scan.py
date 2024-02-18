@@ -5,6 +5,7 @@ import ipaddress
 import itertools
 import json
 import logging
+import operator
 import os
 import queue
 import socket
@@ -15,7 +16,7 @@ import time
 import warnings
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache, partial
+from functools import lru_cache, partial, reduce
 from ipaddress import IPv4Network, IPv6Network
 from threading import Thread
 from typing import Any, Iterable, TextIO
@@ -112,12 +113,10 @@ for k, v in PORT_NAMES.items():
 PORTS_BY_NAME["all"] = sorted(PORT_NAMES)
 # https://docs.digicert.com/en/certcentral/certificate-tools/discovery-user-guide/set-up-and-run-a-scan.html#:~:text=Use%20Default%20to%20include%20ports,%2C%20465%2C%208443%2C%203389.&text=If%20you%20are%20using%20Server,max%2010%20ports%20per%20server
 PORTS_BY_NAME["common"] = sorted(
-    PORTS_BY_NAME["smtp"]
-    + PORTS_BY_NAME["imap"]
-    + PORTS_BY_NAME["pop"]
-    + PORTS_BY_NAME["https"]
-    + PORTS_BY_NAME["ldap"]
-    + PORTS_BY_NAME["rdp"]
+    reduce(
+        operator.add,
+        (PORTS_BY_NAME[k] for k in "smtp imap pop https ldap rdp".split()),
+    )
 )
 
 # Можно выбрать и получше
