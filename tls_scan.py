@@ -36,7 +36,7 @@ except ImportError:
             yield batch
 
 
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 __maintainer__ = "Sergey M"
 
 if "nt" == os.name:
@@ -168,7 +168,7 @@ class NameSpace(argparse.Namespace):
 def parse_port(x: str) -> int | list[int]:
     if x.isdigit():
         return int(x)
-    if rv := PORTS_BY_NAME[x]:
+    if rv := PORTS_BY_NAME.get(x):
         return rv
     try:
         first, last = map(int, x.split("-"))
@@ -189,7 +189,9 @@ def flatten(iterable: Iterable) -> Iterable:
 def parse_networks(addresses: list[str]) -> Iterable[IPv4Network | IPv6Network]:
     for addr in addresses:
         try:
-            first, last = map(ipaddress.ip_address, addr.split("-"))
+            first, last = map(
+                ipaddress.ip_address, map(str.strip, addr.split("-"))
+            )
             yield from ipaddress.summarize_address_range(first, last)
         except ValueError:
             yield ipaddress.ip_network(addr)
