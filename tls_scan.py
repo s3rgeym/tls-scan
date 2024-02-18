@@ -58,7 +58,7 @@ MAGENTA = "\x1b[35m"
 CYAN = "\x1b[36m"
 WHITE = "\x1b[37m"
 
-# Основные я бпвл отсюда:
+# Основные я брал отсюда:
 # https://www.globalsign.com/en-sg/blog/securing-internet-connection-all-about-ssl-port-or-secured-ports
 # Но SSH не имеет никакого отношения к SSL/TSL
 PORT_NAMES = {
