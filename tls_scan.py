@@ -62,17 +62,21 @@ WHITE = "\x1b[37m"
 # https://www.globalsign.com/en-sg/blog/securing-internet-connection-all-about-ssl-port-or-secured-ports
 # Но SSH не имеет никакого отношения к SSL/TSL
 PORT_NAMES = {
-    # Базовые
+    # Почта
     465: "smtp",
     587: "smtp",
     993: "imap",
     995: "pop",
+    
+    853: "dns",
+    
     # vmware и многий другой софт висит на 443 и 8443 портах
     # https://kb.vmware.com/s/article/2039095
     # так же на нем cisco, zabbix
     443: "https",
     # на этом порту висит админка Plesk
     8443: "https",
+    
     # удаленный доступ к рабочему столу
     # виртуалки и/или samba
     636: "ldap",  # ldaps
@@ -80,8 +84,10 @@ PORT_NAMES = {
     # 989: "ftp",
     990: "ftp",
     992: "telnet",
+    
     # в Windows docker висит на порту
     2376: "docker",
+    
     # админки
     # https://docs.cpanel.net/knowledge-base/general-systems-administration/how-to-configure-your-firewall-for-cpanel-services/
     2083: "cpanel",
@@ -98,9 +104,12 @@ PORT_NAMES = {
     # аналог cpanel
     # https://subscription.packtpub.com/book/cloud-and-networking/9781849515849/1/ch01lvl1sec12/connecting-to-webmin#:~:text=Webmin%20uses%20port%2010000%20by,in%20on%20any%20network%20interface.
     10000: "webmin",
+    
     5000: "docker-registry",
+    
     # много разных приожений висит на этом порту
     9000: "any",
+    
     # очереди
     6379: "redis",
     # в документации указывают этот порт, значит все хомячки будут его использовать
@@ -115,7 +124,7 @@ PORTS_BY_NAME["all"] = sorted(PORT_NAMES)
 PORTS_BY_NAME["common"] = sorted(
     reduce(
         operator.add,
-        (PORTS_BY_NAME[k] for k in "smtp imap pop https ldap rdp".split()),
+        (PORTS_BY_NAME[k] for k in "smtp imap pop dns https ldap rdp".split()),
     )
 )
 
